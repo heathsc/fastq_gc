@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{command, value_parser, Arg, ArgAction, Command};
 
-use crate::utils::LogLevel;
+use crate::utils::{BisulfiteType, LogLevel};
 
 pub(super) fn cli_model() -> Command {
     command!()
@@ -62,7 +62,17 @@ pub(super) fn cli_model() -> Command {
                 .action(ArgAction::SetTrue)
                 .long("bisulfite")
                 .short('b')
-                .help("Set bisulfite mode"),
+                .help("Set bisulfite type to forward"),
+        )
+        .arg(
+            Arg::new("bisulfite_type")
+                .short('B')
+                .long("bisulfite-type")
+                .value_name("TYPE")
+                .value_parser(value_parser!(BisulfiteType))
+                .ignore_case(true)
+                .conflicts_with("bisulfite")
+                .help("Set specific bisulfite type"),
         )
         .arg(
             Arg::new("flowcell")

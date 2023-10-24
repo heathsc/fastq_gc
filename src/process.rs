@@ -7,6 +7,7 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender};
 
+use crate::utils::BisulfiteType;
 use crate::{
     cli::Config,
     reader::{Buffer, FastQRecord},
@@ -228,7 +229,7 @@ fn base_counts_from_record(rec: &FastQRecord, trim: usize, min_qual: u8, res: &m
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum BisulfiteStrand {
     None,
     C2T,
@@ -250,23 +251,32 @@ fn process_buffer(cfg: &Config, b: &Buffer, res: &mut ProcessResults) -> anyhow:
     let trim = cfg.trim();
     let min_qual = cfg.min_qual();
     let cseq = cfg.control_seq();
-    let bisulfite = cfg.bisulfite();
+    let bisulfite_type = cfg.bisulfite_type();
+    let read_end = cfg.fli().read_end();
+
+    let strand = match (bisulfite_type, read_end) {
+        (BisulfiteType::None, _) => Some(BisulfiteStrand::None),
+        (BisulfiteType::Forward, Some(1)) | (BisulfiteType::Reverse, Some(2)) => {
+            Some(BisulfiteStrand::C2T)
+        }
+        (BisulfiteType::Forward, Some(2)) | (BisulfiteType::Reverse, Some(1)) => {
+            Some(BisulfiteStrand::G2A)
+        }
+        _ => None,
+    };
+
     for rec in b.fastq() {
         let rec = rec?;
         base_counts_from_record(&rec, trim, min_qual, res);
-        let strand = if bisulfite {
-            BisulfiteStrand::from_counts(&res.temp_cts)
-        } else {
-            BisulfiteStrand::None
-        };
+        let st = strand.unwrap_or_else(|| BisulfiteStrand::from_counts(&res.temp_cts));
 
         if let Some(cs) = cseq {
-            if let Some(ix) = cs.filter(&rec, strand) {
+            if let Some(ix) = cs.filter(&rec, st) {
                 res.control_seq_counts.as_mut().unwrap()[ix] += 1;
                 continue;
             }
         }
-        process_record(&rec, trim, min_qual, strand, res)
+        process_record(&rec, trim, min_qual, st, res)
     }
     Ok(())
 }

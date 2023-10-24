@@ -7,13 +7,16 @@ use std::{
 use regex::Regex;
 mod cli_model;
 
-use crate::control_seq::{process_control_sequences, ControlSeq};
+use crate::{
+    control_seq::{process_control_sequences, ControlSeq},
+    utils::BisulfiteType,
+};
 
 pub struct Config {
     trim: usize,
     min_qual: u8,
     threads: usize,
-    bisulfite: bool,
+    bisulfite: BisulfiteType,
     control_seq: Option<ControlSeq>,
     input_file: Option<PathBuf>,
     fli: Fli,
@@ -48,6 +51,10 @@ impl Fli {
             }
         }
         fli
+    }
+
+    pub fn read_end(&self) -> Option<u8> {
+        self.read_end
     }
 
     pub fn json_output<W: Write>(
@@ -111,7 +118,7 @@ impl Config {
     pub fn fli(&self) -> &Fli {
         &self.fli
     }
-    pub fn bisulfite(&self) -> bool {
+    pub fn bisulfite_type(&self) -> BisulfiteType {
         self.bisulfite
     }
 }
@@ -140,10 +147,19 @@ pub fn handle_cli() -> anyhow::Result<Config> {
         .copied()
         .expect("Missing default trim option");
 
-    let bisulfite = m.get_flag("bisulfite");
+    let bisulfite = m
+        .get_one::<BisulfiteType>("bisulfite_type")
+        .copied()
+        .unwrap_or_else(|| {
+            if m.get_flag("bisulfite") {
+                BisulfiteType::Forward
+            } else {
+                BisulfiteType::None
+            }
+        });
 
     let control_seq = match m.get_one::<PathBuf>("control") {
-        Some(p) => Some(process_control_sequences(p, bisulfite)?),
+        Some(p) => Some(process_control_sequences(p, !bisulfite.is_none())?),
         None => None,
     };
 

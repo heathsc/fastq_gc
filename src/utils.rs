@@ -86,3 +86,35 @@ pub fn init_log(m: &ArgMatches) {
         .init()
         .unwrap();
 }
+
+/// BisulfiteType
+///
+/// Represents minimum level of messages that will be logged
+///
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum BisulfiteType {
+    None = 0,
+    Forward,
+    Reverse,
+    NonStranded,
+}
+
+impl BisulfiteType {
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+impl ValueEnum for BisulfiteType {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::None, Self::Forward, Self::Reverse, Self::NonStranded]
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        match self {
+            Self::None => Some(PossibleValue::new("none")),
+            Self::Forward => Some(PossibleValue::new("forward")),
+            Self::Reverse => Some(PossibleValue::new("reverse")),
+            Self::NonStranded => Some(PossibleValue::new("nonstranded")),
+        }
+    }
+}
