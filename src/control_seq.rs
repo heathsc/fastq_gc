@@ -11,10 +11,6 @@ type CsMask = u64;
 const NORMAL_KMER_LEN: u32 = 20;
 const BISULFITE_KMER_LEN: u32 = 27;
 
-// const KMER_LEN: u32 = 20;
-// const REV_SHIFT: u32 = (KMER_LEN - 1) * 2;
-// const KMER_MASK: u64 = (1 << (KMER_LEN * 2)) - 1;
-
 #[derive(Serialize)]
 pub enum CSeq {
     Regular(ControlSeq<NORMAL_KMER_LEN>),
@@ -251,7 +247,7 @@ impl<const K: u32> ControlSeq<K> {
                 i += ix
             }
         }
-        if best.0 > 0 {
+        if best.0 > 1 {
             let mut x = best.1;
             assert_ne!(x, 0);
             let mut i = 0;
@@ -394,7 +390,7 @@ pub fn process_control_sequences<P: AsRef<Path>>(file: P, bisulfite: bool) -> an
     let mut contigs = read_sequence(file)?;
 
     if bisulfite {
-        process_control_sequences_for_bisulfite(contigs).map(|c| CSeq::Bisulfite(c))
+        process_control_sequences_for_bisulfite(contigs).map(CSeq::Bisulfite)
     } else {
         let n_seq = contigs.len();
         // Each sequence is present in forward and reverse versions
