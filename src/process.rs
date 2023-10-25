@@ -159,11 +159,11 @@ impl PerPositionCounts {
 
 #[derive(Serialize)]
 pub struct ProcessResults<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    control_seq_counts: Option<ControlSeqCounts<'a>>,
     cts: BaseCounts,
     per_pos_cts: PerPositionCounts,
     gc_hash: HashMap<GcHistKey, usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    control_seq_counts: Option<ControlSeqCounts<'a>>,
     #[serde(skip_serializing)]
     temp_cts: BaseCounts,
     #[serde(skip_serializing)]

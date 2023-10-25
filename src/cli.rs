@@ -7,7 +7,7 @@ use serde::Serialize;
 mod cli_model;
 
 use crate::{
-    control_seq::{process_control_sequences, ControlSeq},
+    control_seq::{process_control_sequences, CSeq},
     utils::BisulfiteType,
 };
 
@@ -17,7 +17,7 @@ pub struct Config {
     min_qual: u8,
     threads: usize,
     bisulfite: BisulfiteType,
-    control_seq: Option<ControlSeq>,
+    control_seq: Option<CSeq>,
     input_file: Option<PathBuf>,
     #[serde(skip_serializing)]
     date: DateTime<Local>,
@@ -77,7 +77,7 @@ impl Config {
     pub fn input_file(&self) -> Option<&Path> {
         self.input_file.as_deref()
     }
-    pub fn control_seq(&self) -> Option<&ControlSeq> {
+    pub fn control_seq(&self) -> Option<&CSeq> {
         self.control_seq.as_ref()
     }
     pub fn fli(&self) -> &Fli {
