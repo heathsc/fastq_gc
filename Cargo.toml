@@ -1,6 +1,6 @@
 [package]
 name = "fastq_gc"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 authors = ["Simon Heath <simon.heath@gmail.com>"]
 description = "Utility to estimate GC distribution from FASTQ file"
