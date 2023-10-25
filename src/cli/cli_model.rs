@@ -125,9 +125,17 @@ pub(super) fn cli_model() -> Command {
                 .help("Input FASTA file with control sequences to be excluded"),
         )
         .arg(
+            Arg::new("output")
+                .long("output")
+                .short('o')
+                .value_parser(value_parser!(PathBuf))
+                .value_name("OUTPUT")
+                .help("File name for output JSON file [default: <stdout>"),
+        )
+        .arg(
             Arg::new("input")
                 .value_parser(value_parser!(PathBuf))
                 .value_name("INPUT")
-                .help("Input file with dataset locations and conversion rates"),
+                .help("Input FASTQ file"),
         )
 }

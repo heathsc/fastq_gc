@@ -1,6 +1,5 @@
-use std::io::stdout;
-
 use anyhow::Context;
+use compress_io::compress::CompressIo;
 use serde::Serialize;
 
 use crate::{cli::Config, process::ProcessResults};
@@ -18,7 +17,11 @@ struct JsonReport<'a, 'b, 'c> {
 }
 
 pub fn output_results(cfg: &Config, res: &ProcessResults) -> anyhow::Result<()> {
-    let wrt = stdout();
+    let wrt = CompressIo::new()
+        .opt_path(cfg.output_file())
+        .bufwriter()
+        .with_context(|| "Could not output output file")?;
+
     let jr = JsonReport {
         program: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),

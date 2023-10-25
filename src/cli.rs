@@ -18,6 +18,7 @@ pub struct Config {
     threads: usize,
     bisulfite: BisulfiteType,
     control_seq: Option<CSeq>,
+    output_file: Option<PathBuf>,
     input_file: Option<PathBuf>,
     #[serde(skip_serializing)]
     date: DateTime<Local>,
@@ -77,6 +78,9 @@ impl Config {
     pub fn input_file(&self) -> Option<&Path> {
         self.input_file.as_deref()
     }
+    pub fn output_file(&self) -> Option<&Path> {
+        self.output_file.as_deref()
+    }
     pub fn control_seq(&self) -> Option<&CSeq> {
         self.control_seq.as_ref()
     }
@@ -97,6 +101,7 @@ pub fn handle_cli() -> anyhow::Result<Config> {
     super::utils::init_log(&m);
 
     let input_file = m.get_one::<PathBuf>("input").map(|p| p.to_owned());
+    let output_file = m.get_one::<PathBuf>("output").map(|p| p.to_owned());
 
     let mut fli = Fli::from_input(input_file.as_deref());
 
@@ -153,6 +158,7 @@ pub fn handle_cli() -> anyhow::Result<Config> {
     } else {
         Ok(Config {
             input_file,
+            output_file,
             control_seq,
             trim,
             min_qual,
