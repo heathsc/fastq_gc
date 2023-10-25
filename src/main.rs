@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
     let nt = cfg.threads();
 
     let mut error = false;
-    let mut res = ProcessResults::new(cfg.control_seq().map(|c| c.seq_ids()));
+    let mut res = ProcessResults::new(cfg.control_seq().map(|c| c.seq_ids()), cfg.trim());
 
     thread::scope(|scope| {
         // Channel used to send full buffers to process threads

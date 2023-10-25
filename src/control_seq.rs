@@ -2,14 +2,19 @@ use anyhow::Context;
 use compress_io::compress::CompressIo;
 use std::{collections::HashMap, io::BufRead, ops::Deref, path::Path};
 
+use serde::Serialize;
+
 use crate::{process::BisulfiteStrand, reader::FastQRecord};
 
 type CsMask = u64;
 const KMER_LEN: u32 = 20;
 const REV_SHIFT: u32 = (KMER_LEN - 1) * 2;
 const KMER_MASK: u64 = (1 << (KMER_LEN * 2)) - 1;
+
+#[derive(Serialize)]
 pub struct ControlSeq {
     seq_ids: Vec<String>,
+    #[serde(skip_serializing)]
     hash: HashMap<u64, CsMask>,
 }
 

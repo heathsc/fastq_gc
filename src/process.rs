@@ -1,11 +1,11 @@
 use anyhow::Context;
-use std::{
-    collections::HashMap,
-    io::{Error, Write},
-    ops::AddAssign,
-};
+use std::{collections::HashMap, ops::AddAssign};
 
 use crossbeam_channel::{Receiver, Sender};
+use serde::{
+    ser::{SerializeMap, Serializer},
+    Serialize,
+};
 
 use crate::utils::BisulfiteType;
 use crate::{
@@ -18,24 +18,43 @@ pub struct BaseCounts {
     cts: [usize; 6], // A, C, T, G, N, Other
 }
 
+const SER_LIST: [(&str, usize); 6] = [
+    ("A", 0),
+    ("C", 1),
+    ("G", 3),
+    ("T", 2),
+    ("N", 4),
+    ("Other", 5),
+];
+impl Serialize for BaseCounts {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut n = 4;
+        for c in &self.cts[4..] {
+            if *c > 0 {
+                n += 1
+            }
+        }
+
+        let mut map = serializer.serialize_map(Some(n))?;
+        for (k, v) in &SER_LIST[..4] {
+            map.serialize_entry(*k, &self.cts[*v])?;
+        }
+        for (k, v) in &SER_LIST[4..] {
+            let x = self.cts[*v];
+            if x > 0 {
+                map.serialize_entry(*k, &x)?;
+            }
+        }
+        map.end()
+    }
+}
+
 impl BaseCounts {
     pub fn clear(&mut self) {
         self.cts.fill(0)
-    }
-
-    pub fn json_output<W: Write>(&self, wrt: &mut W) -> Result<(), Error> {
-        write!(
-            wrt,
-            "{{ \"A\": {}, \"C\": {}, \"G\": {}, \"T\": {}",
-            self.cts[0], self.cts[1], self.cts[3], self.cts[2]
-        )?;
-        if self.cts[4] > 0 {
-            write!(wrt, ", \"N\": {}", self.cts[4])?
-        }
-        if self.cts[5] > 0 {
-            write!(wrt, ", \"Other\": {}", self.cts[5])?
-        }
-        write!(wrt, " }}")
     }
 }
 
@@ -47,28 +66,125 @@ impl AddAssign for BaseCounts {
     }
 }
 
+#[derive(Copy, Clone, Eq, PartialOrd, PartialEq, Hash)]
+pub struct GcHistKey(u32, u32);
+
+impl Serialize for GcHistKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{}:{}", self.0, self.1))
+    }
+}
+
+pub struct ControlSeqCounts<'a> {
+    counts: Vec<usize>,
+    ids: &'a [String],
+}
+
+impl<'a> ControlSeqCounts<'a> {
+    fn new(ids: &'a [String]) -> Self {
+        Self {
+            ids,
+            counts: vec![0; ids.len()],
+        }
+    }
+
+    fn add(&mut self, rhs: &Self) {
+        for (p, q) in self.counts.iter_mut().zip(rhs.counts.iter()) {
+            *p += *q
+        }
+    }
+
+    fn add_read(&mut self, ix: usize) {
+        self.counts[ix] += 1
+    }
+}
+
+impl<'a> Serialize for ControlSeqCounts<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.ids.len()))?;
+        for (k, v) in self.ids.iter().zip(self.counts.iter()) {
+            map.serialize_entry(k, v)?;
+        }
+        map.end()
+    }
+}
+
+struct PerPositionCounts {
+    v: Vec<BaseCounts>,
+    trim: usize,
+}
+
+impl Serialize for PerPositionCounts {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.v.len()))?;
+        for (ix, c) in self.v.iter().enumerate() {
+            let i = self.trim + ix + 1;
+            map.serialize_entry(&i, c)?;
+        }
+        map.end()
+    }
+}
+
+impl PerPositionCounts {
+    fn add_obs(&mut self, m: usize, i: usize) {
+        // Resize per pos vec if necessary
+        if i >= self.v.len() {
+            self.v.resize_with(i + 1, BaseCounts::default)
+        }
+        self.v[i].cts[m] += 1;
+    }
+
+    fn add(&mut self, rhs: &Self) {
+        if rhs.v.len() > self.v.len() {
+            self.v.resize_with(rhs.v.len(), BaseCounts::default)
+        }
+        for (x, y) in self.v.iter_mut().zip(&rhs.v) {
+            *x += *y
+        }
+    }
+
+    fn max_read_length(&self) -> usize {
+        self.v.len() + self.trim
+    }
+}
+
+#[derive(Serialize)]
 pub struct ProcessResults<'a> {
-    gc_hash: HashMap<[u32; 2], usize>,
     cts: BaseCounts,
+    per_pos_cts: PerPositionCounts,
+    gc_hash: HashMap<GcHistKey, usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    control_seq_counts: Option<ControlSeqCounts<'a>>,
+    #[serde(skip_serializing)]
     temp_cts: BaseCounts,
-    per_pos_cts: Vec<BaseCounts>,
-    control_seq_counts: Option<Vec<usize>>,
-    control_seq_ids: Option<&'a [String]>,
+    #[serde(skip_serializing)]
     base_map: [u8; 256],
 }
 
 impl<'a> ProcessResults<'a> {
-    pub fn new(control_seq_ids: Option<&'a [String]>) -> Self {
+    pub fn new(control_seq_ids: Option<&'a [String]>, trim: usize) -> Self {
         let gc_hash = HashMap::new();
         let cts = BaseCounts::default();
         let temp_cts = BaseCounts::default();
-        let per_pos_cts = Vec::with_capacity(256);
+        let per_pos_cts = PerPositionCounts {
+            v: Vec::with_capacity(256),
+            trim,
+        };
         let mut base_map = [6; 256];
         for (i, c) in [b'A', b'C', b'T', b'G', b'N'].into_iter().enumerate() {
             base_map[c as usize] = i as u8; // Upper case
             base_map[(c | 32) as usize] = i as u8; // Lower case
         }
-        let control_seq_counts = control_seq_ids.map(|v| vec![0; v.len()]);
+        let control_seq_counts = control_seq_ids.map(|v| ControlSeqCounts::new(v));
 
         Self {
             gc_hash,
@@ -76,19 +192,17 @@ impl<'a> ProcessResults<'a> {
             temp_cts,
             per_pos_cts,
             control_seq_counts,
-            control_seq_ids,
             base_map,
         }
     }
 
+    pub fn max_read_length(&self) -> usize {
+        self.per_pos_cts.max_read_length()
+    }
     fn add_obs(&mut self, b: u8, i: usize) {
-        // Resize per pos vec if necessary
-        if i >= self.per_pos_cts.len() {
-            self.per_pos_cts.resize_with(i + 1, BaseCounts::default)
-        }
         let m = self.base_map[b as usize] as usize;
         self.cts.cts[m] += 1;
-        self.per_pos_cts[i].cts[m] += 1;
+        self.per_pos_cts.add_obs(m, i)
     }
 
     fn clear_tmp_counts(&mut self) {
@@ -102,67 +216,9 @@ impl<'a> ProcessResults<'a> {
 
     fn add_gc(&mut self, a: usize, b: usize) {
         if a + b > 0 {
-            let ct = [a as u32, b as u32];
+            let ct = GcHistKey(a as u32, b as u32);
             let e = self.gc_hash.entry(ct).or_insert(0);
             *e += 1
-        }
-    }
-
-    pub fn json_output<W: Write>(
-        &self,
-        wrt: &mut W,
-        trim: usize,
-        indent: usize,
-        in_list: bool,
-    ) -> Result<(), Error> {
-        if in_list {
-            writeln!(wrt, ",")?;
-        }
-        if let Some(cs_cts) = self.control_seq_counts.as_deref() {
-            writeln!(wrt, "{:indent$}\"control_seq_counts\": {{", " ")?;
-            let i = indent + 3;
-            let seq_ids = self.control_seq_ids.unwrap();
-            let mut first = true;
-            for (s, c) in seq_ids.iter().zip(cs_cts) {
-                if first {
-                    first = false
-                } else {
-                    writeln!(wrt, ",")?;
-                }
-                write!(wrt, "{:i$}\"{s}\": {c}", " ")?;
-            }
-            writeln!(wrt, "\n{:indent$}}},", " ")?;
-        }
-        write!(wrt, "{:indent$}\"base_counts\": ", " ")?;
-        self.cts.json_output(wrt)?;
-        let c0 = BaseCounts::default();
-        let v = vec![c0; trim];
-        let mut itr = v.iter().chain(self.per_pos_cts.iter());
-        if let Some(c) = itr.next() {
-            writeln!(wrt, ",\n{:indent$}\"per_position_base_counts\": [", " ")?;
-            let i = indent + 3;
-            write!(wrt, "{:i$}", " ")?;
-            c.json_output(wrt)?;
-            for c in itr {
-                write!(wrt, ",\n{:i$}", " ")?;
-                c.json_output(wrt)?
-            }
-            write!(wrt, "\n{:indent$}]", " ")?;
-        }
-        let mut itr = self.gc_hash.iter();
-        if let Some((k, v)) = itr.next() {
-            let i = indent + 3;
-            write!(
-                wrt,
-                ",\n{:indent$}\"gc_counts\": {{\n{:i$}\"{}:{}\": {v}",
-                " ", " ", k[0], k[1]
-            )?;
-            for (k, v) in itr {
-                write!(wrt, ",\n{:i$}\"{}:{}\": {v}", " ", k[0], k[1])?
-            }
-            write!(wrt, "\n{:indent$}}}", " ")
-        } else {
-            Ok(())
         }
     }
 }
@@ -174,23 +230,15 @@ impl<'a> AddAssign for ProcessResults<'a> {
             let e = self.gc_hash.entry(key).or_insert(0);
             *e += val
         }
+
         // And counts
         self.cts += rhs.cts;
-        if rhs.per_pos_cts.len() > self.per_pos_cts.len() {
-            self.per_pos_cts
-                .resize_with(rhs.per_pos_cts.len(), BaseCounts::default)
-        }
-        for (x, y) in self.per_pos_cts.iter_mut().zip(&rhs.per_pos_cts) {
-            *x += *y
-        }
+        self.per_pos_cts.add(&rhs.per_pos_cts);
+
         // And control sequence counts
-        if let Some(cs) = self.control_seq_counts.as_deref_mut() {
-            // Will panic if both do not have counts, or if counts vec are different sizes
-            let cs1 = rhs.control_seq_counts.as_deref().unwrap();
-            assert_eq!(cs.len(), cs1.len());
-            for (p, q) in cs.iter_mut().zip(cs1) {
-                *p += *q
-            }
+        if let Some(cs) = self.control_seq_counts.as_mut() {
+            let cs1 = rhs.control_seq_counts.as_ref().unwrap();
+            cs.add(cs1)
         }
     }
 }
@@ -272,7 +320,7 @@ fn process_buffer(cfg: &Config, b: &Buffer, res: &mut ProcessResults) -> anyhow:
 
         if let Some(cs) = cseq {
             if let Some(ix) = cs.filter(&rec, st) {
-                res.control_seq_counts.as_mut().unwrap()[ix] += 1;
+                res.control_seq_counts.as_mut().unwrap().add_read(ix);
                 continue;
             }
         }
@@ -288,7 +336,7 @@ pub fn process_thread(
     sx: Sender<Buffer>,
 ) -> anyhow::Result<ProcessResults> {
     debug!("Starting up process thread {ix}");
-    let mut res = ProcessResults::new(cfg.control_seq().map(|c| c.seq_ids()));
+    let mut res = ProcessResults::new(cfg.control_seq().map(|c| c.seq_ids()), cfg.trim());
 
     while let Ok(mut b) = rx.recv() {
         trace!("Process thread {ix} received new block");

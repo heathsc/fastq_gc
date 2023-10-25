@@ -1,10 +1,9 @@
-use std::io::Error;
-use std::{
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Local};
 use regex::Regex;
+use serde::Serialize;
+
 mod cli_model;
 
 use crate::{
@@ -12,6 +11,7 @@ use crate::{
     utils::BisulfiteType,
 };
 
+#[derive(Serialize)]
 pub struct Config {
     trim: usize,
     min_qual: u8,
@@ -19,16 +19,23 @@ pub struct Config {
     bisulfite: BisulfiteType,
     control_seq: Option<ControlSeq>,
     input_file: Option<PathBuf>,
+    #[serde(skip_serializing)]
+    date: DateTime<Local>,
     fli: Fli,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct Fli {
     sample: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     library: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     flowcell: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     index: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     lane: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     read_end: Option<u8>,
 }
 
@@ -52,50 +59,8 @@ impl Fli {
         }
         fli
     }
-
     pub fn read_end(&self) -> Option<u8> {
         self.read_end
-    }
-
-    pub fn json_output<W: Write>(
-        &self,
-        wrt: &mut W,
-        indent: usize,
-        mut in_list: bool,
-    ) -> Result<bool, Error> {
-        let mut chk = |w: &mut W| -> Result<(), Error> {
-            if !in_list {
-                in_list = true;
-                Ok(())
-            } else {
-                writeln!(w, ",")
-            }
-        };
-        if let Some(s) = self.sample.as_deref() {
-            chk(wrt)?;
-            write!(wrt, "{:indent$}\"sample\": \"{}\"", " ", s)?;
-        }
-        if let Some(l) = self.library.as_deref() {
-            chk(wrt)?;
-            write!(wrt, "{:indent$}\"library\": \"{}\"", " ", l)?;
-        }
-        if let Some(fc) = self.flowcell.as_deref() {
-            chk(wrt)?;
-            write!(wrt, "{:indent$}\"flowcell\": \"{}\"", " ", fc)?;
-        }
-        if let Some(l) = self.lane {
-            chk(wrt)?;
-            write!(wrt, "{:indent$}\"lane\": \"{}\"", " ", l)?;
-        }
-        if let Some(ix) = self.index.as_deref() {
-            chk(wrt)?;
-            write!(wrt, "{:indent$}\"index\": \"{}\"", " ", ix)?;
-        }
-        if let Some(e) = self.read_end {
-            chk(wrt)?;
-            write!(wrt, "{:indent$}\"read_end\": \"{}\"", " ", e)?;
-        }
-        Ok(in_list)
     }
 }
 
@@ -120,6 +85,9 @@ impl Config {
     }
     pub fn bisulfite_type(&self) -> BisulfiteType {
         self.bisulfite
+    }
+    pub fn date(&self) -> &DateTime<Local> {
+        &self.date
     }
 }
 
@@ -185,6 +153,7 @@ pub fn handle_cli() -> anyhow::Result<Config> {
         min_qual,
         threads,
         bisulfite,
+        date: Local::now(),
         fli,
     })
 }

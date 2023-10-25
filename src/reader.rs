@@ -297,7 +297,6 @@ pub fn reader(cfg: &Config, rcv: Receiver<Buffer>, snd: Sender<Buffer>) -> anyho
 
 mod test {
     use super::*;
-
     #[allow(dead_code)]
     fn test_split(s: &str, ix: usize, wlen: usize) {
         let mut work = Vec::new();

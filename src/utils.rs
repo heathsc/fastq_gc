@@ -1,6 +1,7 @@
 use std::fmt;
 
 use clap::{builder::PossibleValue, ArgMatches, ValueEnum};
+use serde::Serialize;
 
 /// LogLevel
 ///
@@ -91,7 +92,7 @@ pub fn init_log(m: &ArgMatches) {
 ///
 /// Represents minimum level of messages that will be logged
 ///
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
 pub enum BisulfiteType {
     None = 0,
     Forward,
