@@ -146,14 +146,20 @@ pub fn handle_cli() -> anyhow::Result<Config> {
         fli.read_end = Some(*end)
     }
 
-    Ok(Config {
-        input_file,
-        control_seq,
-        trim,
-        min_qual,
-        threads,
-        bisulfite,
-        date: Local::now(),
-        fli,
-    })
+    if matches!(bisulfite, BisulfiteType::Forward | BisulfiteType::Reverse)
+        && fli.read_end.is_none()
+    {
+        Err(anyhow!("Can not determine read end from input file name.  Either use --read-end option to specify end, or change bisulfite type using --bisulfite-type to none or nonstranded"))
+    } else {
+        Ok(Config {
+            input_file,
+            control_seq,
+            trim,
+            min_qual,
+            threads,
+            bisulfite,
+            date: Local::now(),
+            fli,
+        })
+    }
 }
