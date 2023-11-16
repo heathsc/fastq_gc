@@ -90,8 +90,6 @@ pub fn init_log(m: &ArgMatches) {
 
 /// BisulfiteType
 ///
-/// Represents minimum level of messages that will be logged
-///
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
 pub enum BisulfiteType {
     None = 0,

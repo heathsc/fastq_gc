@@ -9,9 +9,9 @@ struct JsonReport<'a, 'b, 'c> {
     program: &'static str,
     version: &'static str,
     date: String,
+    max_read_length: usize,
     #[serde(flatten)]
     cfg: &'a Config,
-    max_read_length: usize,
     #[serde(flatten)]
     res: &'b ProcessResults<'c>,
 }
