@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use crate::kmcv::Kmcv;
 use serde::Serialize;
@@ -28,6 +28,23 @@ impl KmerIdxHits {
     }
 }
 
+#[derive(Default)]
+struct TargetHash {
+    hash: HashMap<u32, u32>, // Keep track of which targets have been tagged for a read
+}
+
+impl TargetHash {
+    fn clear(&mut self) {
+        self.hash.clear()
+    }
+
+    fn add_hit(&mut self, v: &[u32]) {
+        for idx in v {
+            *self.hash.entry(*idx).or_insert(0) += 1
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct KmerCounts<'a> {
     kmcv: &'a Kmcv,
@@ -37,18 +54,23 @@ pub struct KmerCounts<'a> {
     mapped_bases: u64,
     counts: Vec<(u32, u64)>,
     #[serde(skip_serializing)]
-    target_hash: HashMap<u32, u32>, // Keep track of which targets have been tagged for a read
+    hash_vec: VecDeque<Option<TargetHash>>,
 }
 
 impl<'a> KmerCounts<'a> {
     pub fn new(kmcv: &'a Kmcv) -> Self {
         let n_targets = kmcv.n_targets();
+        let kmer_length = kmcv.kmer_length();
         let counts = vec![(0, 0); n_targets];
-        let target_hash = HashMap::new();
+        let mut hash_vec = VecDeque::with_capacity(kmer_length as usize);
+        for _ in 0..kmer_length {
+            hash_vec.push_back(Some(TargetHash::default()));
+        }
+
         Self {
             kmcv,
             counts,
-            target_hash,
+            hash_vec,
             total_reads: 0,
             mapped_reads: 0,
             total_bases: 0,
@@ -67,22 +89,71 @@ impl<'a> KmerCounts<'a> {
     }
 
     pub fn clear_hash(&mut self) {
-        self.target_hash.clear()
+        for h in self.hash_vec.iter_mut() {
+            h.as_mut().unwrap().clear()
+        }
     }
 
-    pub fn add_target_hit(&mut self, kmer: KmerType) {
-        if let Some(v) = self.kmcv.target_hits(kmer) {
-            for idx in v {
-                *self.target_hash.entry(*idx).or_insert(0) += 1
+    pub fn kmer_length(&self) -> usize {
+        self.kmcv.kmer_length() as usize
+    }
+
+    fn add_current_contrib(&mut self, kmer: Option<KmerType>, th: &mut TargetHash) {
+        if let Some(k) = kmer {
+            if let Some(v) = self.kmcv.target_hits(k) {
+                th.add_hit(v);
             }
         }
+    }
+
+    fn get_max(th: &mut TargetHash, th1: &TargetHash) {
+        for (a, b) in th1.hash.iter() {
+            match th.hash.entry(*a) {
+                Entry::Vacant(mut e) => {
+                    e.insert(*b);
+                }
+                Entry::Occupied(mut e) => {
+                    let p = e.get_mut();
+                    let x = *p;
+                    *p = x.max(*b)
+                }
+            }
+        }
+    }
+
+    pub fn add_target_hit(&mut self, i: usize, kmer: Option<KmerType>) {
+        let mut th = self.hash_vec[i].take().unwrap();
+        th.hash.clear();
+
+        // Add contributions from current kmer
+        self.add_current_contrib(kmer, &mut th);
+
+        // Get max of previous position and current position
+        if i > 0 {
+            let th1 = self.hash_vec[i - 1].as_ref().unwrap();
+            Self::get_max(&mut th, th1);
+        }
+        self.hash_vec[i] = Some(th);
+    }
+
+    pub fn update(&mut self, kmer: Option<KmerType>) {
+        let mut th = self.hash_vec.pop_front().unwrap().unwrap();
+
+        let l = self.hash_vec.len();
+        // Add contributions from current kmer
+        self.add_current_contrib(kmer, &mut th);
+
+        let th1 = self.hash_vec[l - 1].as_ref().unwrap();
+        Self::get_max(&mut th, th1);
+        self.hash_vec.push_back(Some(th));
     }
 
     pub fn check_map_and_update_counts(&mut self, read_length: usize) {
         let mut hit1: Option<(u32, u32)> = None;
         let mut hit2: Option<(u32, u32)> = None;
 
-        for (t, n) in self.target_hash.iter().filter(|(&t, &n)| t > 0 && n > 1) {
+        let th = self.hash_vec.back().unwrap().as_ref().unwrap();
+        for (t, n) in th.hash.iter().filter(|(&t, &n)| t > 0 && n > 1) {
             if let Some((t1, n1)) = hit1.take() {
                 if *n > n1 {
                     hit1 = Some((*t, *n));

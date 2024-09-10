@@ -282,12 +282,31 @@ fn process_record(
 fn process_kmers(rec: &FastQRecord, kw: &mut KmerWork, base_map: &[u8; 256], trim: usize) {
     let (kc, kb) = kw.counts_builder_mut();
     kc.clear_hash();
+
+    /*
     for v in rec.seq()[trim..].chunks_exact(kb.kmer_length()) {
         if let Some(kmer) = kb.make_from_slice(v, |b| base_map[*b as usize] as KmerType) {
             kc.add_target_hit(kmer)
         }
+    }*/
+
+    let kmer_length = kc.kmer_length();
+
+    if kmer_length <= rec.seq().len() {
+        kb.clear();
+        for (i, b) in rec.seq().iter().copied().enumerate() {
+            kb.add_base(base_map[b as usize]);
+            if i >= kmer_length {
+                let j = i - kmer_length;
+                if j < kmer_length {
+                    kc.add_target_hit(j, kb.kmer())
+                } else {
+                    kc.update(kb.kmer())
+                }
+            }
+        }
+        kc.check_map_and_update_counts(rec.seq().len())
     }
-    kc.check_map_and_update_counts(rec.seq().len())
 }
 
 fn base_counts_from_record(rec: &FastQRecord, trim: usize, min_qual: u8, res: &mut ProcessResults) {
