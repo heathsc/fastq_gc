@@ -10,6 +10,8 @@ use serde::{
 use crate::utils::BisulfiteType;
 use crate::{
     cli::Config,
+    kmcv::Kmcv,
+    kmers::{KmerType, KmerWork},
     reader::{Buffer, FastQRecord},
 };
 
@@ -158,7 +160,7 @@ impl PerPositionCounts {
 }
 
 #[derive(Serialize)]
-pub struct ProcessResults<'a> {
+pub struct ProcessResults<'a, 'b> {
     #[serde(skip_serializing_if = "Option::is_none")]
     control_seq_counts: Option<ControlSeqCounts<'a>>,
     cts: BaseCounts,
@@ -168,10 +170,12 @@ pub struct ProcessResults<'a> {
     temp_cts: BaseCounts,
     #[serde(skip_serializing)]
     base_map: [u8; 256],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kmer_work: Option<KmerWork<'b>>,
 }
 
-impl<'a> ProcessResults<'a> {
-    pub fn new(control_seq_ids: Option<&'a [String]>, trim: usize) -> Self {
+impl<'a, 'b> ProcessResults<'a, 'b> {
+    pub fn new(control_seq_ids: Option<&'a [String]>, trim: usize, kmcv: Option<&'b Kmcv>) -> Self {
         let gc_hash = HashMap::new();
         let cts = BaseCounts::default();
         let temp_cts = BaseCounts::default();
@@ -184,7 +188,8 @@ impl<'a> ProcessResults<'a> {
             base_map[c as usize] = i as u8; // Upper case
             base_map[(c | 32) as usize] = i as u8; // Lower case
         }
-        let control_seq_counts = control_seq_ids.map(|v| ControlSeqCounts::new(v));
+        let control_seq_counts = control_seq_ids.map(ControlSeqCounts::new);
+        let kmer_work = kmcv.map(KmerWork::new);
 
         Self {
             gc_hash,
@@ -193,6 +198,7 @@ impl<'a> ProcessResults<'a> {
             per_pos_cts,
             control_seq_counts,
             base_map,
+            kmer_work,
         }
     }
 
@@ -223,7 +229,7 @@ impl<'a> ProcessResults<'a> {
     }
 }
 
-impl<'a> AddAssign for ProcessResults<'a> {
+impl<'a, 'b> AddAssign for ProcessResults<'a, 'b> {
     fn add_assign(&mut self, rhs: Self) {
         // Add hash
         for (key, val) in rhs.gc_hash {
@@ -235,10 +241,17 @@ impl<'a> AddAssign for ProcessResults<'a> {
         self.cts += rhs.cts;
         self.per_pos_cts.add(&rhs.per_pos_cts);
 
-        // And control sequence counts
+        // plus control sequence counts
         if let Some(cs) = self.control_seq_counts.as_mut() {
             let cs1 = rhs.control_seq_counts.as_ref().unwrap();
             cs.add(cs1)
+        }
+
+        // plus kmer counts
+        if let Some(kw) = self.kmer_work.as_mut() {
+            if let Some(kw1) = rhs.kmer_work.as_ref() {
+                kw.add(kw1)
+            }
         }
     }
 }
@@ -264,6 +277,17 @@ fn process_record(
         BisulfiteStrand::G2A => (cts[2], cts[1]),                    // T , C
     };
     res.add_gc(a, b)
+}
+
+fn process_kmers(rec: &FastQRecord, kw: &mut KmerWork, base_map: &[u8; 256], trim: usize) {
+    let (kc, kb) = kw.counts_builder_mut();
+    kc.clear_hash();
+    for v in rec.seq()[trim..].chunks_exact(kb.kmer_length()) {
+        if let Some(kmer) = kb.make_from_slice(v, |b| base_map[*b as usize] as KmerType) {
+            kc.add_target_hit(kmer)
+        }
+    }
+    kc.check_map_and_update_counts(rec.seq().len())
 }
 
 fn base_counts_from_record(rec: &FastQRecord, trim: usize, min_qual: u8, res: &mut ProcessResults) {
@@ -300,7 +324,8 @@ fn process_buffer(cfg: &Config, b: &Buffer, res: &mut ProcessResults) -> anyhow:
     let min_qual = cfg.min_qual();
     let cseq = cfg.control_seq();
     let bisulfite_type = cfg.bisulfite_type();
-    let read_end = cfg.fli().read_end();
+    let file_index = b.file_index();
+    let read_end = cfg.fli()[file_index].read_end();
 
     let strand = match (bisulfite_type, read_end) {
         (BisulfiteType::None, _) => Some(BisulfiteStrand::None),
@@ -313,6 +338,11 @@ fn process_buffer(cfg: &Config, b: &Buffer, res: &mut ProcessResults) -> anyhow:
         _ => None,
     };
 
+    assert!(
+        res.kmer_work.is_none() || matches!(bisulfite_type, BisulfiteType::None),
+        "Cannot track kmer usage with bisulfite data"
+    );
+
     for rec in b.fastq() {
         let rec = rec?;
         base_counts_from_record(&rec, trim, min_qual, res);
@@ -324,8 +354,12 @@ fn process_buffer(cfg: &Config, b: &Buffer, res: &mut ProcessResults) -> anyhow:
                 continue;
             }
         }
-        process_record(&rec, trim, min_qual, st, res)
+        process_record(&rec, trim, min_qual, st, res);
+        if let Some(kw) = res.kmer_work.as_mut() {
+            process_kmers(&rec, kw, &res.base_map, trim)
+        }
     }
+
     Ok(())
 }
 
@@ -334,13 +368,37 @@ pub fn process_thread(
     ix: usize,
     rx: Receiver<Buffer>,
     sx: Sender<Buffer>,
-) -> anyhow::Result<ProcessResults> {
+) -> anyhow::Result<Vec<(usize, ProcessResults)>> {
     debug!("Starting up process thread {ix}");
-    let mut res = ProcessResults::new(cfg.control_seq().map(|c| c.seq_ids()), cfg.trim());
+    let mut res_vec = Vec::new();
+
+    let new_res = || {
+        ProcessResults::new(
+            cfg.control_seq().map(|c| c.seq_ids()),
+            cfg.trim(),
+            cfg.kmcv(),
+        )
+    };
 
     while let Ok(mut b) = rx.recv() {
         trace!("Process thread {ix} received new block");
-        process_buffer(cfg, &b, &mut res)
+        if let Some((idx, _)) = res_vec.last() {
+            if b.file_index() != *idx {
+                debug!(
+                    "Process thread {ix} started processing blocks from file {}",
+                    b.file_index()
+                );
+                res_vec.push((b.file_index(), new_res()));
+            }
+        } else {
+            debug!(
+                "Process thread {ix} started processing blocks from file {}",
+                b.file_index()
+            );
+            res_vec.push((b.file_index(), new_res()));
+        }
+        let res = &mut res_vec.last_mut().unwrap().1;
+        process_buffer(cfg, &b, res)
             .with_context(|| format!("Process thread {}: Error parsing input buffer", ix))?;
         trace!("Process thread {ix} finished processing block; sending empty block back to reader");
         b.clear();
@@ -351,5 +409,5 @@ pub fn process_thread(
     }
     debug!("Closing down process thread {ix}");
 
-    Ok(res)
+    Ok(res_vec)
 }

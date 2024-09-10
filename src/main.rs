@@ -9,6 +9,8 @@ use crossbeam_utils::thread;
 
 mod cli;
 mod control_seq;
+mod kmcv;
+mod kmers;
 mod output;
 mod process;
 mod reader;
@@ -22,7 +24,16 @@ fn main() -> anyhow::Result<()> {
     let nt = cfg.threads();
 
     let mut error = false;
-    let mut res = ProcessResults::new(cfg.control_seq().map(|c| c.seq_ids()), cfg.trim());
+
+    let nf = cfg.input_files().len();
+    let mut res_vec = Vec::with_capacity(nf);
+    for _ in 0..nf {
+        res_vec.push(ProcessResults::new(
+            cfg.control_seq().map(|c| c.seq_ids()),
+            cfg.trim(),
+            cfg.kmcv(),
+        ));
+    }
 
     thread::scope(|scope| {
         // Channel used to send full buffers to process threads
@@ -54,7 +65,11 @@ fn main() -> anyhow::Result<()> {
                     error!("{:?}", e);
                     error = true
                 }
-                Ok(r) => res += r,
+                Ok(mut v) => {
+                    for (ix, r) in v.drain(..) {
+                        res_vec[ix] += r
+                    }
+                }
             }
         }
     })
@@ -63,7 +78,10 @@ fn main() -> anyhow::Result<()> {
     if error {
         Err(anyhow!("Error occurred during processing"))
     } else {
-        output::output_results(&cfg, &res)
-            .with_context(|| "Error occurred while writing output JSON file")
+        for (ix, res) in res_vec.drain(..).enumerate() {
+            output::output_results(&cfg, &res, ix)
+                .with_context(|| "Error occurred while writing output JSON file")?;
+        }
+        Ok(())
     }
 }

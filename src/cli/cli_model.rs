@@ -62,7 +62,8 @@ pub(super) fn cli_model() -> Command {
                 .action(ArgAction::SetTrue)
                 .long("bisulfite")
                 .short('b')
-                .help("Set bisulfite type to forward"),
+                .conflicts_with("kmers")
+                .help("Set bisulfite mode to Forward"),
         )
         .arg(
             Arg::new("bisulfite_type")
@@ -72,6 +73,7 @@ pub(super) fn cli_model() -> Command {
                 .value_parser(value_parser!(BisulfiteType))
                 .ignore_case(true)
                 .conflicts_with("bisulfite")
+                .conflicts_with("kmers")
                 .help("Set specific bisulfite type"),
         )
         .arg(
@@ -125,17 +127,27 @@ pub(super) fn cli_model() -> Command {
                 .help("Input FASTA file with control sequences to be excluded"),
         )
         .arg(
-            Arg::new("output")
-                .long("output")
-                .short('o')
+            Arg::new("kmers")
+                .long("kmers")
+                .short('k')
                 .value_parser(value_parser!(PathBuf))
-                .value_name("OUTPUT")
-                .help("File name for output JSON file [default: <stdout>"),
+                .value_name("KM FILE")
+                .help("Input KM file with unique kmers for coverage estimation"),
+        )
+        .arg(
+            Arg::new("output_prefix")
+                .long("output_prefix")
+                .short('o')
+                .value_parser(value_parser!(String))
+                .value_name("OUTPUT PREFIX")
+                .default_value("fastq_gc")
+                .help("Prefix for output JSON file"),
         )
         .arg(
             Arg::new("input")
                 .value_parser(value_parser!(PathBuf))
                 .value_name("INPUT")
+                .action(ArgAction::Append)
                 .help("Input FASTQ file"),
         )
 }

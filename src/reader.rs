@@ -6,17 +6,22 @@ use crossbeam_channel::{Receiver, Sender};
 
 use crate::cli::Config;
 
-const BUF_SIZE: usize = 8192;
+const BUF_SIZE: usize = 65536;
 
 pub struct Buffer {
     inner: Box<[u8]>,
     used: usize,
+    file_index: usize,
 }
 
 impl Default for Buffer {
     fn default() -> Self {
         let inner = vec![0; BUF_SIZE].into_boxed_slice();
-        Self { inner, used: 0 }
+        Self {
+            inner,
+            used: 0,
+            file_index: 0,
+        }
     }
 }
 
@@ -79,6 +84,10 @@ impl Buffer {
         FastQIter {
             inner: self.as_slice(),
         }
+    }
+
+    pub fn file_index(&self) -> usize {
+        self.file_index
     }
 }
 
@@ -257,41 +266,41 @@ fn get_buffer(buf_list: &mut Vec<Buffer>, rcv: &Receiver<Buffer>) -> anyhow::Res
 }
 
 pub fn reader(cfg: &Config, rcv: Receiver<Buffer>, snd: Sender<Buffer>) -> anyhow::Result<()> {
-    // Try to open input file/stream
-    let mut rdr = CompressIo::new()
-        .opt_path(cfg.input_file())
-        .reader()
-        .with_context(|| "Could not open input file")?;
-
-    debug!("Opened input");
     // Create empty buffers
     let nbuffers = cfg.threads() * 2;
     let mut buffer_list = Vec::with_capacity(nbuffers);
     for _ in 0..nbuffers {
         buffer_list.push(Buffer::default())
     }
-
     let mut work = Vec::new();
+
     let mut pending = buffer_list.pop().unwrap();
+    for (ix, f) in cfg.input_files().iter().map(|f| f.as_deref()).enumerate() {
+        // Try to open input file/stream
+        let mut rdr = CompressIo::new()
+            .opt_path(f)
+            .reader()
+            .with_context(|| "Could not open input file")?;
 
-    debug!("Starting main read loop");
-    // Main loop - read file until empty
-    loop {
-        let mut b = pending;
-        let rem = b
-            .fill(&mut rdr, &mut work)
-            .with_context(|| "Error reading FASTQ data")?;
-        pending = get_buffer(&mut buffer_list, &rcv)?;
-        trace!("Read buffer");
-        pending.push_slice(rem);
-        if b.is_empty() {
-            break;
+        debug!("Opened input {:?} and starting read loop", f);
+        // Main loop - read file until empty
+        loop {
+            let mut b = pending;
+            b.file_index = ix;
+            let rem = b
+                .fill(&mut rdr, &mut work)
+                .with_context(|| "Error reading FASTQ data")?;
+            pending = get_buffer(&mut buffer_list, &rcv)?;
+            trace!("Read buffer");
+            pending.push_slice(rem);
+            if b.is_empty() {
+                break;
+            }
+            trace!("Sending full buffer for processing");
+            snd.send(b).with_context(|| "Error sending full buffer")?;
         }
-        trace!("Sending full buffer for processing");
-        snd.send(b).with_context(|| "Error sending full buffer")?;
     }
-
-    debug!("Finished reading input");
+    debug!("Finished reading all inputs");
     Ok(())
 }
 
@@ -343,7 +352,11 @@ mod test {
         let bytes = s.as_bytes();
         let used = bytes.len();
         let inner = bytes.to_vec().into_boxed_slice();
-        let buf = Buffer { inner, used };
+        let buf = Buffer {
+            inner,
+            used,
+            file_index: 0,
+        };
 
         let mut itr = buf.fastq().skip(2);
         let rec = get_rec(&mut itr).unwrap();
