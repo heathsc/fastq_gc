@@ -171,6 +171,7 @@ pub struct ProcessResults<'a, 'b> {
     #[serde(skip_serializing)]
     base_map: [u8; 256],
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(flatten)]
     kmer_work: Option<KmerWork<'b>>,
 }
 

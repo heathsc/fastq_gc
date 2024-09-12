@@ -462,7 +462,7 @@ pub struct KmerBuilder {
 
 #[derive(Serialize)]
 pub struct KmerWork<'a> {
-    counts: KmerCounts<'a>,
+    kmer_counts: KmerCounts<'a>,
     #[serde(skip_serializing)]
     builder: KmerBuilder,
 }
@@ -471,15 +471,18 @@ impl<'a> KmerWork<'a> {
     pub fn new(k: &'a Kmcv) -> Self {
         let counts = KmerCounts::new(k);
         let builder = KmerBuilder::new(k.kmer_length());
-        Self { counts, builder }
+        Self {
+            kmer_counts: counts,
+            builder,
+        }
     }
 
     pub fn add(&mut self, rhs: &Self) {
-        self.counts.add(&rhs.counts)
+        self.kmer_counts.add(&rhs.kmer_counts)
     }
 
     pub fn counts_builder_mut(&mut self) -> (&mut KmerCounts<'a>, &mut KmerBuilder) {
-        (&mut self.counts, &mut self.builder)
+        (&mut self.kmer_counts, &mut self.builder)
     }
 }
 
