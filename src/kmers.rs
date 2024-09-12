@@ -1,8 +1,4 @@
-use std::{
-    cmp::Ordering,
-    collections::{hash_map::Entry, HashMap, VecDeque},
-    iter::Peekable,
-};
+use std::{cmp::Ordering, collections::VecDeque};
 
 use crate::kmcv::Kmcv;
 use serde::Serialize;
@@ -457,7 +453,6 @@ pub struct KmerBuilder {
     valid: KmerType,
     mask: KmerType,
     valid_mask: KmerType,
-    kmer_length: usize,
 }
 
 #[derive(Serialize)]
@@ -500,7 +495,6 @@ impl KmerBuilder {
             valid: 0,
             mask: (!ZERO) >> (nb - k - k),
             valid_mask: (!ZERO) >> (nb - k),
-            kmer_length: k,
         }
     }
 
@@ -517,24 +511,6 @@ impl KmerBuilder {
         self.valid = ((self.valid << 1) & self.valid_mask) | valid;
     }
 
-    pub fn make_from_slice<F>(&mut self, bases: &[u8], f: F) -> Option<KmerType>
-    where
-        F: Fn(&u8) -> KmerType,
-    {
-        self.clear();
-        if bases.len() < self.kmer_length {
-            None
-        } else {
-            for x in bases[..self.kmer_length].iter().map(f) {
-                if x > 3 {
-                    return None;
-                }
-                self.kmer = (self.kmer << 2) | x;
-            }
-            Some(self.kmer)
-        }
-    }
-
     /// Check if kmer is composed entirely of valid (i.e., A, C, G, T) bases
     #[inline]
     pub fn kmer(&self) -> Option<KmerType> {
@@ -543,10 +519,5 @@ impl KmerBuilder {
         } else {
             None
         }
-    }
-
-    #[inline]
-    pub fn kmer_length(&self) -> usize {
-        self.kmer_length
     }
 }

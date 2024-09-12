@@ -19,10 +19,8 @@ fn get_u64_from_slice(p: &[u8]) -> u64 {
 
 #[derive(Debug, Serialize)]
 pub struct KmcvHeader {
-    #[serde(skip_serializing)]
     version: [u8; 2],
     kmer_length: u8,
-    #[serde(skip_serializing)]
     max_hits: u8,
     n_contigs: u32,
     n_targets: u32,
@@ -110,16 +108,9 @@ impl KmcvHeader {
             Ok(())
         }
     }
-
-    pub fn kmer_length(&self) -> u8 {
-        self.kmer_length
-    }
-
-    pub fn rnd_id(&self) -> u32 {
-        self.rnd_id
-    }
 }
 
+#[allow(dead_code)]
 pub struct Target {
     start: u32,
     end: u32,
@@ -157,10 +148,6 @@ impl Target {
         } else {
             Ok((start, end))
         }
-    }
-
-    pub fn size(&self) -> u32 {
-        self.end + 1 - self.start
     }
 }
 
@@ -326,10 +313,6 @@ impl Kmcv {
                 Some(&self.target_hits[i..i + n])
             }
         })
-    }
-
-    pub fn targets(&self) -> &[Target] {
-        &self.targets
     }
 
     /// Private functions

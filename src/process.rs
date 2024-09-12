@@ -11,7 +11,7 @@ use crate::utils::BisulfiteType;
 use crate::{
     cli::Config,
     kmcv::Kmcv,
-    kmers::{KmerType, KmerWork},
+    kmers::KmerWork,
     reader::{Buffer, FastQRecord},
 };
 
@@ -280,7 +280,7 @@ fn process_record(
     res.add_gc(a, b)
 }
 
-fn process_kmers(rec: &FastQRecord, kw: &mut KmerWork, base_map: &[u8; 256], trim: usize) {
+fn process_kmers(rec: &FastQRecord, kw: &mut KmerWork, base_map: &[u8; 256]) {
     let (kc, kb) = kw.counts_builder_mut();
     kc.clear();
 
@@ -295,7 +295,6 @@ fn process_kmers(rec: &FastQRecord, kw: &mut KmerWork, base_map: &[u8; 256], tri
 
     if kmer_length <= rec.seq().len() {
         kb.clear();
-        let l = rec.seq().len();
         for (i, b) in rec.seq().iter().copied().enumerate() {
             kb.add_base(base_map[b as usize]);
             if i >= kmer_length {
@@ -377,7 +376,7 @@ fn process_buffer(cfg: &Config, b: &Buffer, res: &mut ProcessResults) -> anyhow:
         }
         process_record(&rec, trim, min_qual, st, res);
         if let Some(kw) = res.kmer_work.as_mut() {
-            process_kmers(&rec, kw, &res.base_map, trim)
+            process_kmers(&rec, kw, &res.base_map)
         }
     }
 
