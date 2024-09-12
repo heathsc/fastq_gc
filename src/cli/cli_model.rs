@@ -132,7 +132,7 @@ pub(super) fn cli_model() -> Command {
                 .short('k')
                 .value_parser(value_parser!(PathBuf))
                 .value_name("KM FILE")
-                .help("Input KM file with unique kmers for coverage estimation"),
+                .help("Input KM file with kmers for coverage estimation"),
         )
         .arg(
             Arg::new("output_prefix")

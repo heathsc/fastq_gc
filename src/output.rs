@@ -1,8 +1,15 @@
+use std::path::Path;
+
 use anyhow::Context;
 use compress_io::{compress::CompressIo, compress_type::CompressType};
 use serde::Serialize;
 
-use crate::{cli::Config, process::ProcessResults};
+use crate::{
+    cli::{Config, Fli},
+    control_seq::CSeq,
+    process::ProcessResults,
+    utils::BisulfiteType,
+};
 
 /*
 fn output_counts(kc: &KmerCounts, targets: &[Target]) -> anyhow::Result<()> {
@@ -19,6 +26,32 @@ fn output_counts(kc: &KmerCounts, targets: &[Target]) -> anyhow::Result<()> {
 }
 
  */
+#[derive(Serialize)]
+pub struct JsonConfig<'a> {
+    trim: usize,
+    min_qual: u8,
+    threads: usize,
+    bisulfite: BisulfiteType,
+    control_seq: Option<&'a CSeq>,
+    output_prefix: &'a str,
+    input_file: Option<&'a Path>,
+    fli: &'a Fli,
+}
+
+impl<'a> JsonConfig<'a> {
+    fn from_config(cfg: &'a Config, ix: usize) -> Self {
+        Self {
+            trim: cfg.trim(),
+            min_qual: cfg.min_qual(),
+            threads: cfg.threads(),
+            bisulfite: cfg.bisulfite_type(),
+            control_seq: cfg.control_seq(),
+            output_prefix: cfg.output_prefix(),
+            input_file: cfg.input_files()[ix].as_deref(),
+            fli: &cfg.fli()[ix],
+        }
+    }
+}
 
 #[derive(Serialize)]
 struct JsonReport<'a, 'b, 'c> {
@@ -27,7 +60,7 @@ struct JsonReport<'a, 'b, 'c> {
     date: String,
     max_read_length: usize,
     #[serde(flatten)]
-    cfg: &'a Config,
+    cfg: JsonConfig<'a>,
     #[serde(flatten)]
     res: &'b ProcessResults<'c, 'a>,
 }
@@ -44,7 +77,7 @@ pub fn output_results(cfg: &Config, res: &ProcessResults, idx: usize) -> anyhow:
         program: env!("CARGO_PKG_NAME"),
         version: env!("CARGO_PKG_VERSION"),
         date: cfg.date().to_rfc2822(),
-        cfg,
+        cfg: JsonConfig::from_config(cfg, idx),
         res,
         max_read_length: res.max_read_length(),
     };
