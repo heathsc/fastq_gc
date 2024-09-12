@@ -314,9 +314,17 @@ impl Kmcv {
     }
 
     pub fn target_hits(&self, kmer: KmerType) -> Option<&[u32]> {
-        self.kmers.get(&kmer).map(|k| {
+        self.kmers.get(&kmer).and_then(|k| {
             let (n, i) = (k.hits() as usize, k.idx());
-            &self.target_hits[i..i + n]
+            if self.target_hits[i] == 0 {
+                if n > 1 {
+                    Some(&self.target_hits[i + 1..i + n])
+                } else {
+                    None
+                }
+            } else {
+                Some(&self.target_hits[i..i + n])
+            }
         })
     }
 
@@ -387,7 +395,6 @@ impl Kmcv {
     ) -> anyhow::Result<usize> {
         let (ktype, skip) = get_type_skip(rdr)?;
         let kmer = kmer + skip;
-        // println!("Reading block for kmer {kmer} type {:?} skip {skip}", ktype);
 
         if kmer >= total_kmers {
             Err(anyhow!("kmer is larger than maximum"))
@@ -407,6 +414,7 @@ impl Kmcv {
                         format!("Error processing hits for kmer {} (skip = {})", kmer, skip)
                     })?
                 }
+                self.target_hits[i..].sort_unstable();
                 Ok(kmer)
             }
         } else {

@@ -1,4 +1,8 @@
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use std::{
+    cmp::Ordering,
+    collections::{hash_map::Entry, HashMap, VecDeque},
+    iter::Peekable,
+};
 
 use crate::kmcv::Kmcv;
 use serde::Serialize;
@@ -29,22 +33,236 @@ impl KmerIdxHits {
 }
 
 #[derive(Default)]
-struct TargetHash {
-    hash: HashMap<u32, u32>, // Keep track of which targets have been tagged for a read
+struct TargetVec {
+    v: Vec<(u32, u32)>, // Keep track of which targets have been tagged for a read
 }
 
-impl TargetHash {
+impl TargetVec {
     fn clear(&mut self) {
-        self.hash.clear()
+        self.v.clear()
     }
+}
 
-    fn add_hit(&mut self, v: &[u32]) {
-        for idx in v {
-            *self.hash.entry(*idx).or_insert(0) += 1
+struct TVMaxVec<'a, 'b> {
+    left: &'a [(u32, u32)],
+    right: &'b [u32],
+    left_ix: usize,
+    right_ix: usize,
+}
+
+impl<'a, 'b> TVMaxVec<'a, 'b> {
+    fn new(left: &'a [(u32, u32)], right: &'b [u32]) -> Self {
+        Self {
+            left,
+            right,
+            left_ix: 0,
+            right_ix: 0,
+        }
+    }
+}
+impl<'a, 'b> Iterator for TVMaxVec<'a, 'b> {
+    type Item = (u32, u32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let l = self.left.get(self.left_ix);
+        let r = self.right.get(self.right_ix);
+
+        let which = match (l, r) {
+            (Some((l, _)), Some(r)) => Some(l.cmp(r)),
+            (Some((_, _)), None) => Some(Ordering::Less),
+            (None, Some(_)) => Some(Ordering::Greater),
+            (None, None) => None,
+        };
+
+        match which {
+            Some(Ordering::Less) => {
+                self.left_ix += 1;
+                l.copied()
+            }
+            Some(Ordering::Equal) => {
+                self.left_ix += 1;
+                self.right_ix += 1;
+
+                l.copied()
+            }
+            Some(Ordering::Greater) => {
+                self.right_ix += 1;
+                r.map(|a| (*a, 1))
+            }
+            None => None,
         }
     }
 }
 
+struct TVMrgMax<'a, 'b> {
+    left: &'a [(u32, u32)],
+    right: &'b [(u32, u32)],
+    left_ix: usize,
+    right_ix: usize,
+}
+
+impl<'a, 'b> TVMrgMax<'a, 'b> {
+    fn new(left: &'a [(u32, u32)], right: &'b [(u32, u32)]) -> Self {
+        Self {
+            left,
+            right,
+            left_ix: 0,
+            right_ix: 0,
+        }
+    }
+}
+impl<'a, 'b> Iterator for TVMrgMax<'a, 'b> {
+    type Item = (u32, u32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let l = self.left.get(self.left_ix);
+        let r = self.right.get(self.right_ix);
+
+        let (which, n2) = match (l, r) {
+            (Some((l, _)), Some((r, n2))) => (Some(l.cmp(r)), *n2),
+            (Some((_, _)), None) => (Some(Ordering::Less), 0),
+            (None, Some(_)) => (Some(Ordering::Greater), 0),
+            (None, None) => (None, 0),
+        };
+
+        match which {
+            Some(Ordering::Less) => {
+                self.left_ix += 1;
+                l.copied()
+            }
+            Some(Ordering::Equal) => {
+                self.left_ix += 1;
+                self.right_ix += 1;
+
+                l.map(|(a, b)| (*a, *b.max(&n2)))
+            }
+            Some(Ordering::Greater) => {
+                self.right_ix += 1;
+                r.copied()
+            }
+            None => None,
+        }
+    }
+}
+
+struct TVAddVecMrgMax<'a, 'b, 'c> {
+    left: &'a [(u32, u32)],
+    right: &'b [(u32, u32)],
+    v: &'c [u32],
+    left_ix: usize,
+    right_ix: usize,
+    v_ix: usize,
+}
+
+impl<'a, 'b, 'c> TVAddVecMrgMax<'a, 'b, 'c> {
+    fn new(left: &'a [(u32, u32)], right: &'b [(u32, u32)], v: &'c [u32]) -> Self {
+        Self {
+            left,
+            right,
+            v,
+            left_ix: 0,
+            right_ix: 0,
+            v_ix: 0,
+        }
+    }
+}
+
+enum AVOrd {
+    AllEqual(u32),
+    LMin,
+    RMin,
+    VMin,
+    LRMin(u32),
+    LVMin,
+    RVMin,
+    None,
+}
+
+impl<'a, 'b, 'c> Iterator for TVAddVecMrgMax<'a, 'b, 'c> {
+    type Item = (u32, u32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let l = self.left.get(self.left_ix);
+        let r = self.right.get(self.right_ix);
+        let v = self.v.get(self.v_ix);
+
+        let which = match (l, r, v) {
+            (Some((l, n1)), Some((r, n2)), Some(v)) => match l.cmp(r) {
+                Ordering::Equal => match l.cmp(v) {
+                    Ordering::Equal => AVOrd::AllEqual((n1 + 1).max(*n2)),
+                    Ordering::Less => AVOrd::LRMin(*n1.max(n2)),
+                    Ordering::Greater => AVOrd::VMin,
+                },
+                Ordering::Less => match l.cmp(v) {
+                    Ordering::Equal => AVOrd::LVMin,
+                    Ordering::Less => AVOrd::LMin,
+                    Ordering::Greater => AVOrd::VMin,
+                },
+                Ordering::Greater => match r.cmp(v) {
+                    Ordering::Equal => AVOrd::RVMin,
+                    Ordering::Less => AVOrd::RMin,
+                    Ordering::Greater => AVOrd::VMin,
+                },
+            },
+            (Some((l, n1)), Some((r, n2)), None) => match l.cmp(r) {
+                Ordering::Equal => AVOrd::LRMin(*n1.max(n2)),
+                Ordering::Less => AVOrd::LMin,
+                Ordering::Greater => AVOrd::RMin,
+            },
+            (Some((l, _)), None, Some(v)) => match l.cmp(v) {
+                Ordering::Equal => AVOrd::LVMin,
+                Ordering::Less => AVOrd::LMin,
+                Ordering::Greater => AVOrd::VMin,
+            },
+            (None, Some((r, _)), Some(v)) => match r.cmp(v) {
+                Ordering::Equal => AVOrd::RVMin,
+                Ordering::Less => AVOrd::RMin,
+                Ordering::Greater => AVOrd::VMin,
+            },
+            (Some(_), None, None) => AVOrd::LMin,
+            (None, Some(_), None) => AVOrd::RMin,
+            (None, None, Some(_)) => AVOrd::VMin,
+            (None, None, None) => AVOrd::None,
+        };
+
+        match which {
+            AVOrd::AllEqual(n) => {
+                self.left_ix += 1;
+                self.right_ix += 1;
+                self.v_ix += 1;
+                l.map(|(a, _)| (*a, n))
+            }
+            AVOrd::LRMin(n) => {
+                self.left_ix += 1;
+                self.right_ix += 1;
+                l.map(|(a, _)| (*a, n))
+            }
+            AVOrd::LVMin => {
+                self.left_ix += 1;
+                self.v_ix += 1;
+                l.map(|(a, b)| (*a, b + 1))
+            }
+            AVOrd::RVMin => {
+                self.right_ix += 1;
+                self.v_ix += 1;
+                r.copied()
+            }
+            AVOrd::LMin => {
+                self.left_ix += 1;
+                l.copied()
+            }
+            AVOrd::RMin => {
+                self.right_ix += 1;
+                r.copied()
+            }
+            AVOrd::VMin => {
+                self.v_ix += 1;
+                v.map(|a| (*a, 1))
+            }
+            AVOrd::None => None,
+        }
+    }
+}
 #[derive(Serialize)]
 pub struct KmerCounts<'a> {
     kmcv: &'a Kmcv,
@@ -54,7 +272,9 @@ pub struct KmerCounts<'a> {
     mapped_bases: u64,
     counts: Vec<(u32, u64)>,
     #[serde(skip_serializing)]
-    hash_vec: VecDeque<Option<TargetHash>>,
+    hash_vec: VecDeque<Option<TargetVec>>,
+    #[serde(skip_serializing)]
+    work_vec: Option<TargetVec>,
 }
 
 impl<'a> KmerCounts<'a> {
@@ -64,13 +284,14 @@ impl<'a> KmerCounts<'a> {
         let counts = vec![(0, 0); n_targets];
         let mut hash_vec = VecDeque::with_capacity(kmer_length as usize);
         for _ in 0..kmer_length {
-            hash_vec.push_back(Some(TargetHash::default()));
+            hash_vec.push_back(Some(TargetVec::default()));
         }
 
         Self {
             kmcv,
             counts,
             hash_vec,
+            work_vec: Some(TargetVec::default()),
             total_reads: 0,
             mapped_reads: 0,
             total_bases: 0,
@@ -88,7 +309,7 @@ impl<'a> KmerCounts<'a> {
         self.mapped_bases += rhs.mapped_bases;
     }
 
-    pub fn clear_hash(&mut self) {
+    pub fn clear(&mut self) {
         for h in self.hash_vec.iter_mut() {
             h.as_mut().unwrap().clear()
         }
@@ -98,24 +319,51 @@ impl<'a> KmerCounts<'a> {
         self.kmcv.kmer_length() as usize
     }
 
-    fn add_current_contrib(&mut self, kmer: Option<KmerType>, th: &mut TargetHash) {
-        if let Some(k) = kmer {
-            if let Some(v) = self.kmcv.target_hits(k) {
-                th.add_hit(v);
+    fn add_contrib_and_prev(
+        &self,
+        kmer: Option<KmerType>,
+        th: &mut TargetVec,
+        prev: Option<&TargetVec>,
+    ) {
+        let hits = kmer.and_then(|k| self.kmcv.target_hits(k));
+
+        match (hits, prev) {
+            (Some(v), Some(p)) => {
+                for x in TVMaxVec::new(&p.v, v) {
+                    th.v.push(x)
+                }
             }
+            (Some(v), None) => {
+                for x in v {
+                    th.v.push((*x, 1))
+                }
+            }
+            (None, Some(p)) => {
+                th.v.extend_from_slice(&p.v);
+            }
+            (None, None) => (),
         }
     }
 
-    fn get_max(th: &mut TargetHash, th1: &TargetHash) {
-        for (a, b) in th1.hash.iter() {
-            match th.hash.entry(*a) {
-                Entry::Vacant(mut e) => {
-                    e.insert(*b);
+    fn update_contribs(
+        &self,
+        kmer: Option<KmerType>,
+        th: &TargetVec,
+        th1: &TargetVec,
+        work: &mut TargetVec,
+    ) {
+        work.v.clear();
+        let hits = kmer.and_then(|k| self.kmcv.target_hits(k));
+
+        match hits {
+            Some(v) => {
+                for x in TVAddVecMrgMax::new(&th.v, &th1.v, v) {
+                    work.v.push(x)
                 }
-                Entry::Occupied(mut e) => {
-                    let p = e.get_mut();
-                    let x = *p;
-                    *p = x.max(*b)
+            }
+            None => {
+                for x in TVMrgMax::new(&th.v, &th1.v) {
+                    work.v.push(x)
                 }
             }
         }
@@ -123,29 +371,35 @@ impl<'a> KmerCounts<'a> {
 
     pub fn add_target_hit(&mut self, i: usize, kmer: Option<KmerType>) {
         let mut th = self.hash_vec[i].take().unwrap();
-        th.hash.clear();
+        th.clear();
+        let prev = if i > 0 {
+            self.hash_vec[i - 1].as_ref()
+        } else {
+            None
+        };
 
         // Add contributions from current kmer
-        self.add_current_contrib(kmer, &mut th);
+        self.add_contrib_and_prev(kmer, &mut th, prev);
 
-        // Get max of previous position and current position
-        if i > 0 {
-            let th1 = self.hash_vec[i - 1].as_ref().unwrap();
-            Self::get_max(&mut th, th1);
-        }
         self.hash_vec[i] = Some(th);
     }
 
     pub fn update(&mut self, kmer: Option<KmerType>) {
-        let mut th = self.hash_vec.pop_front().unwrap().unwrap();
+        let mut work = self.work_vec.take().unwrap();
+        work.clear();
+        let th = self.hash_vec.pop_front().unwrap().unwrap();
 
         let l = self.hash_vec.len();
-        // Add contributions from current kmer
-        self.add_current_contrib(kmer, &mut th);
-
         let th1 = self.hash_vec[l - 1].as_ref().unwrap();
-        Self::get_max(&mut th, th1);
-        self.hash_vec.push_back(Some(th));
+
+        if th.v.is_empty() {
+            self.add_contrib_and_prev(kmer, &mut work, Some(th1))
+        } else {
+            self.update_contribs(kmer, &th, th1, &mut work)
+        }
+
+        self.hash_vec.push_back(Some(work));
+        self.work_vec = Some(th);
     }
 
     pub fn check_map_and_update_counts(&mut self, read_length: usize) {
@@ -153,7 +407,7 @@ impl<'a> KmerCounts<'a> {
         let mut hit2: Option<(u32, u32)> = None;
 
         let th = self.hash_vec.back().unwrap().as_ref().unwrap();
-        for (t, n) in th.hash.iter().filter(|(&t, &n)| t > 0 && n > 1) {
+        for (t, n) in th.v.iter().filter(|(t, n)| *t > 0 && *n > 1) {
             if let Some((t1, n1)) = hit1.take() {
                 if *n > n1 {
                     hit1 = Some((*t, *n));

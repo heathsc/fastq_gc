@@ -1,13 +1,13 @@
 [package]
 name = "fastq_gc"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2021"
 authors = ["Simon Heath <simon.heath@gmail.com>"]
 description = "Utility to estimate GC distribution from FASTQ file"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [profile.release]
-# debug = true
+debug = true
 lto = "fat"
 
 [dependencies]

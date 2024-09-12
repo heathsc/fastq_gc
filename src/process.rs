@@ -281,7 +281,7 @@ fn process_record(
 
 fn process_kmers(rec: &FastQRecord, kw: &mut KmerWork, base_map: &[u8; 256], trim: usize) {
     let (kc, kb) = kw.counts_builder_mut();
-    kc.clear_hash();
+    kc.clear();
 
     /*
     for v in rec.seq()[trim..].chunks_exact(kb.kmer_length()) {
@@ -294,6 +294,7 @@ fn process_kmers(rec: &FastQRecord, kw: &mut KmerWork, base_map: &[u8; 256], tri
 
     if kmer_length <= rec.seq().len() {
         kb.clear();
+        let l = rec.seq().len();
         for (i, b) in rec.seq().iter().copied().enumerate() {
             kb.add_base(base_map[b as usize]);
             if i >= kmer_length {
