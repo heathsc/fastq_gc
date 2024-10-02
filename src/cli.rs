@@ -35,6 +35,8 @@ pub struct Config {
 pub struct Fli {
     sample: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    barcode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     library: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     flowcell: Option<String>,
@@ -69,6 +71,7 @@ impl Fli {
         }
 
         fli.sample = m.get_one::<String>("sample").map(|s| s.to_owned());
+        fli.barcode = m.get_one::<String>("barcode").map(|s| s.to_owned());
         fli.library = m.get_one::<String>("library").map(|s| s.to_owned());
         if let Some(flowcell) = m.get_one::<String>("flowcell") {
             fli.flowcell = Some(flowcell.to_owned())

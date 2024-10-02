@@ -11,21 +11,6 @@ use crate::{
     utils::BisulfiteType,
 };
 
-/*
-fn output_counts(kc: &KmerCounts, targets: &[Target]) -> anyhow::Result<()> {
-    let mut wrt = CompressIo::new()
-        .path("target_counts.gz")
-        .bufwriter()
-        .with_context(|| "Could not open output kmer file")?;
-
-    for (i, p) in kc.counts().iter().enumerate() {
-        let cov = p.1 as f64 / targets[i].size() as f64;
-        writeln!(wrt, "{i}\t{:.2}\t{}", cov, p.0)?
-    }
-    Ok(())
-}
-
- */
 #[derive(Serialize)]
 pub struct JsonConfig<'a> {
     trim: usize,

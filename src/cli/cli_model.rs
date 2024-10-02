@@ -98,6 +98,13 @@ pub(super) fn cli_model() -> Command {
                 .help("Sample ID"),
         )
         .arg(
+            Arg::new("barcode")
+                .long("barcode")
+                .value_parser(value_parser!(String))
+                .value_name("BARCODE")
+                .help("Sample barcode"),
+        )
+        .arg(
             Arg::new("lane")
                 .long("lane")
                 .value_parser(value_parser!(u8))
